@@ -1,16 +1,24 @@
 using WaterLily
-import CUDA
+using CUDA
 using StaticArrays
 import Printf.@sprintf
 using Plots
 using LinearAlgebra: norm2
 using DelimitedFiles
 import Plots:Animation, buildanimation 
+using Sockets
+using Printf
 
 include("resources.jl")
 
-episode_path = "episode_deterministic"
+# Grab socket ID and episode ID from the args
+episode_path = "episode_" * ARGS[1]
+socket_id = parse(Int, ARGS[2])
 
+# Connect to Python server
+sock = connect("127.0.0.1", socket_id)
+
+# Main settings.
 T = Float32
 # Reynolds number of the cylinder.
 Re = T(250)
@@ -43,6 +51,11 @@ xStart = random_point_in_circle(x0Start[1], x0Start[2], Rstart)
 xEnd = random_point_in_circle(x0End[1], x0End[2], Rend)
 pos = copy(xStart)
 
+# Send the initial conditions to Python.
+println("Julia sending initial")
+sendMessage(vcat([xStart..., xEnd...]), sock)
+println("Julia sent initial")
+
 # === main ===
 #@assert CUDA.functional()
 
@@ -54,7 +67,7 @@ mkdir(episode_path)
 
 U = 1
 body = AutoBody((x,t)->√sum(abs2, x .- x0) - R)
-sim = Simulation((N, M), (U, 0), R; ν=U*R/Re, body=body, T=T)#, mem=CUDA.CuArray)
+sim = Simulation((N, M), (U, 0), R; ν=U*R/Re, body=body, T=T)#, mem=CuArray)
 
 timevals = range(0, (n_steps_startup+max_steps)*dt, step=dt)
 frames = []
@@ -64,13 +77,31 @@ iStep = 0
 for t in timevals
     global iStep
     global pos
-    #global episode_history
-    #global frames
     
+    # Increment the time.
     iStep += 1
     println("Current time ", t, " time step ", iStep)
-    
+
+    # Advance the flow.    
     sim_step!(sim, t)
+
+    #=
+    data = [1.0, 2.0, 3.0]
+    length = 128
+    formatted_data = map(x -> @sprintf("%.2e", x), data)
+    message = join(formatted_data, " ")
+    padded_message = rpad(message, length, " ")
+    println("Julia sending: ", padded_message)
+    write(sock, padded_message)
+    println("Julia sent")
+    flush(sock)
+    println("Julia flushed")
+    
+    # Receive response
+    msg = read(sock, 128)
+    msg = strip(String(msg), '\0')
+    println("Julia got: ", msg)
+    =#
     
     if iStep > n_steps_startup
         # Retrieve the flow velocity at the agent location.
@@ -95,23 +126,31 @@ for t in timevals
         pos = pos .+ (vSet .+ vFlow) .* dt
         println("  x_swimmer=", pos, " d_target=", dTarget)
         
+        # Send data
+        sendMessage(vcat([pos..., vSet..., vFlow...]), sock; counter=iStep)
+        
+        # Receive response
+        msg = read(sock, 128)
+        msg = strip(String(msg), '\0')
+        println("Julia got: ", msg)
+        
         # Update episode stats.
-#        push!(episode_history, vcat(pos, vFlow, vSet, dTarget))
+        push!(episode_history, vcat(pos, vFlow, vSet, dTarget))
         
         # Plot the current state and save the fig into a file.        
-#        fname = plot_snapshot(sim, x0, R, x0Start, Rstart, x0End, Rend, rlDomainMin,
-#            rlDomainMax, episode_history, pos, vSet, vFlow, xStart, xEnd, iStep-n_steps_startup-1, episode_path)
-        
-#        push!(frames, fname)
+        fname = plot_snapshot(sim, x0, R, x0Start, Rstart, x0End, Rend, rlDomainMin,
+            rlDomainMax, episode_history, pos, vSet, vFlow, xStart, xEnd, iStep-n_steps_startup-1, episode_path)
+        push!(frames, fname)
     end
 end
 
 # Convert frames to a gif.
-#anim = Animation(episode_path, frames)
-#buildanimation(anim, joinpath(episode_path, "animatedEpisode.gif"), fps=12, show_msg=false)
+anim = Animation(episode_path, frames)
+buildanimation(anim, joinpath(episode_path, "animatedEpisode.gif"), fps=12, show_msg=false)
 
-#open(joinpath(episode_path, "episodeHistory.csv"); write=true) do f
-#    write(f, "x, y, uFlow, vFlow, u, v, dTarget\n")
-#    writedlm(f, episode_history, ',')
-#end
+# Save all data to a csv.
+open(joinpath(episode_path, "episodeHistory.csv"); write=true) do f
+    write(f, "x, y, uFlow, vFlow, u, v, dTarget\n")
+    writedlm(f, episode_history, ',')
+end
 

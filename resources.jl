@@ -1,5 +1,6 @@
 using Plots
 using Measures
+import Printf.@sprintf
 
 # NOTE: stolen from WaterLily.jl/examples/TwoD_plots.jl
 function flood(f::Array; shift=(0.,0.), cfill=:RdBu_11, clims=(), levels=10, kv...)
@@ -101,5 +102,20 @@ function plot_snapshot(sim, x0, R, x0Start, Rstart, x0End, Rend, rlDomainMin,
     savefig(joinpath(figDir, fname))
     
     return fname
+end
+
+function sendMessage(data, sock; length=128, counter=nothing)
+    if counter == nothing
+        prefix = ""
+    else
+        prefix = string(counter)
+    end
+    formatted_data = map(x -> @sprintf("%.6e", x), data)
+    message = join(formatted_data, " ")
+    padded_message = rpad(prefix * " " * message, length, " ")
+#    println("Julia sending: ", padded_message)
+    write(sock, padded_message)
+#    println("Julia sent")
+    flush(sock)
 end
 
