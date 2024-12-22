@@ -6,6 +6,53 @@ import numpy as np
 import gymnasium
 import typing
 
+def isSimRunning(simulation_process, verbose=True):
+    return_code = simulation_process.poll()
+    if return_code is not None:
+        if verbose:
+            print(f"Simulation finished with exit code {return_code}")
+        
+        # Capture all the outputs when the process finishes
+        stdout_data, stderr_data = simulation_process.communicate()
+
+        if verbose:        
+            print("Final output:")
+            print(stdout_data.decode())
+            print(stderr_data.decode())
+
+        return False, stdout_data.decode() + stderr_data.decode()
+    
+    else:
+        return True, None
+
+
+def receive(connection, simulation_process, logdir, msg_len=128, delay=0.1):
+    # Receive the initial handshake with the first observation.
+# xTODO this is a bit unsafe, add try except here or some timeout.
+    while True:
+        time.sleep(delay)
+
+        # Return the message if all's fine.        
+        buf = connection.recv(msg_len).decode("utf-8")
+        if len(buf) > 0:
+            break
+        
+        # Check the sim status.
+        simOk, log = isSimRunning(simulation_process)
+        
+        if not simOk:
+            # log the simulation output and let the calling
+            # code know that the simulation is no longer running. This will not be
+            # called on a regular pass as it's meant for debugging only. Use a regular
+            # log on the Julia side for regular bookkeeping.
+            with open(os.path.join(logdir, "log_server.txt"), "w") as logfile:
+                logfile.write(log)
+
+            return simOk, log
+        
+    return True, buf
+        
+
 class WLEnv(gymnasium.Env):
     """ This is the main interface class for connecting WaterLily to reinforcement learning.
     
@@ -23,17 +70,30 @@ class WLEnv(gymnasium.Env):
         self.msg_len = msg_len
         self.observation_space = gymnasium.spaces.Box(-1., 1., shape=(n_state_vars,), dtype=np.float64)
         self.action_space = gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(n_action_vars,), dtype=np.float64)
+        self.simulation_process = None
     
+    def killSim(self):
+        if self.simulation_process is not None:
+            if self.simulation_process.poll() is None:
+                self.simulation_process.terminate()
+                self.simulation_process.wait()
+                return True
+        return False
+
     def reset(self, seed: typing.Optional[int] = None, options: typing.Optional[dict] = None):
         """ Submit the simulation and wait until it starts to run. This will provide the
         initial observation. """
-        
-        episodeId = "commsTestEpisode"
 
+        # TODO change for subsequent episodes.        
+        self.portNumber = 8092
+        self.episode_dir = "episode_commsTestEpisode"
+        
+        # Check if a previous process needs to be killed.
+        self.killSim()
+        
         # Spawn the simulation process.
-        portNumber = 8092
         self.simulation_process = subprocess.Popen(
-            ["julia", "sim_02_swimmerClient.jl", episodeId, "{:d}".format(portNumber)],
+            ["julia", "sim_02_swimmerClient.jl", self.episode_dir, "{:d}".format(self.portNumber)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=os.setsid
@@ -42,36 +102,20 @@ class WLEnv(gymnasium.Env):
         # Wait a bit and open a socket.
         time.sleep(1.)
         serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        serversocket.bind(('localhost', portNumber))
+        serversocket.bind(('localhost', self.portNumber))
         # become a server socket, maximum 5 connections
         serversocket.listen(5)
         self.connection, address = serversocket.accept()
-        print("Server listening")
+        print(f"Server listening on port {self.portNumber}")
 
         # Receive the initial handshake with the first observation.
-        # TODO this is a bit unsafe, add try except here or some timeout.
-        while True:
-            time.sleep(0.5)
-            buf = self.connection.recv(self.msg_len).decode("utf-8")
-            if len(buf) > 0:
-                print("Python got initial:", buf)
-                break
-            
-            # Check if the process has finished
-            return_code = self.simulation_process.poll()
-            if return_code is not None:
-                print(f"Simulation finished with exit code {return_code}")
-                
-                # Capture all the outputs when the process finishes
-                stdout_data, stderr_data = self.simulation_process.communicate()
-                
-                # TODO dumpt this to a log.
-                print("Final output:")
-                print(stdout_data.decode())
-                print(stderr_data.decode())
-                
-                break
-                
+        simOk, buf = receive(self.connection, self.simulation_process, self.episode_dir, msg_len=self.msg_len)
+        
+        # This shouldn't happen...
+        if not simOk:
+            raise RuntimeError("Simulation did not start correctly, check the log! Usually this means an issue on the Julia side.")
+
+        # Convert the buffer to the initial observation. Last two entries are reward and done.                
         observation = np.array([float(v) for v in buf.split()[1:-2]])
 
         # Dummy.
@@ -86,66 +130,51 @@ class WLEnv(gymnasium.Env):
         # Send the action to WaterLily. This will advance the CFD time by one step
         # and a new agent state will be computed, together with the reward. These will
         # be returned via sockets.
-        # TODO
-        observation = None
-        terminated = False
-        reward = 0
         
         # Send the action.
+        # TODO wrap into a separate function.
         msg = bytes(" ".join(["{:.6e}".format(a) for a in action]) + "\n", 'UTF-8')
         padded_message = msg[:self.msg_len].ljust(self.msg_len, b'\0')
-        print("Python sending:", padded_message)
+        #print("Python sending:", padded_message)
         self.connection.sendall(padded_message)
        
         # Get the new observation and reward.
-        # TODO this is a bit unsafe, add try except here or some timeout.
-        while True:
-            time.sleep(0.5)
-            buf = self.connection.recv(self.msg_len).decode("utf-8")
-            if len(buf) > 0:
-                print("Python got:", buf)
-                break
-            
-            # Check if the process has finished
-            return_code = self.simulation_process.poll()
-            if return_code is not None:
-                print(f"Simulation finished with exit code {return_code}")
-                
-                # Capture all the outputs when the process finishes
-                stdout_data, stderr_data = self.simulation_process.communicate()
-                
-                # TODO dumpt this to a log.
-                print("Final output:")
-                print(stdout_data.decode())
-                print(stderr_data.decode())
-                
-                break
-                
-        observation = np.array([float(v) for v in buf.split()[1:-2]])
-        reward = float(buf.split()[-2])
-        done = float(buf.split()[-1]) < 0.5
-       
+        simOk, buf = receive(self.connection, self.simulation_process, self.episode_dir, msg_len=self.msg_len)
+        
+        # Split into components from the vector message.                
+        if simOk:
+            observation = np.array([float(v) for v in buf.split()[1:-2]])
+            reward = float(buf.split()[-2])
+            done = float(buf.split()[-1]) > 0.5
+        else:
+            # This shouldn't happen...
+            print("Bad sim, bad!")
+            observation = None
+            reward = 0
+            done = True
+        
         # Check if the max no. steps has been reached.
         info = {}
         self.iStep += 1
         truncated = False
         if self.iStep >= self.max_episode_steps:
-            terminated = True
+            done = True
             truncated = True
-            reward = 0
         info["TimeLimit.truncated"] = truncated
         
-        return observation, reward, terminated, truncated, info
+        return observation, reward, done, truncated, info
 
+    def close(self):
+        self.killSim()
 
 class DummySwimmerAgent(object):
     def predict(self, obs, deterministic=True):
         try:
-            return np.array([-np.arctan2(obs[1], obs[0]) / np.pi]), None
+            return np.array([np.arctan2(obs[1], obs[0]) / np.pi]), None
         except AttributeError:
             # During training, this gets given an obs and info as a tuple
             obs = obs[0]
-            return np.array([-np.arctan2(obs[1], obs[0]) / np.pi]), None
+            return np.array([np.arctan2(obs[1], obs[0]) / np.pi]), None
 
 
 def concatEpisodeData(obs, actions, reward):

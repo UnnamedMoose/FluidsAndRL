@@ -3,6 +3,7 @@ import socket
 import time
 import os
 import numpy as np
+import pandas
 
 import sb3_contrib
 import stable_baselines3
@@ -23,6 +24,7 @@ agent = resources.DummySwimmerAgent()
 # Run a trial evaluation
 nStepsMax = 200
 
+#try:
 obs, info = env_eval.reset()
 episodeData = [resources.concatEpisodeData(obs, np.zeros(len(env_eval.action_space.sample())), 0.)]
 
@@ -35,52 +37,6 @@ for i in range(nStepsMax):
 
 episodeData = pandas.DataFrame(episodeData)
 
+#finally:
+env_eval.close()
 
-"""
-        try:
-            # Keep running the simulation.
-            while True:
-                # Chill for a bit.
-                time.sleep(0.5)
-                print("I'm alive")
-                
-                # Check if the process has finished
-                return_code = self.simulation_process.poll()
-                if return_code is not None:
-                    print(f"Simulation finished with exit code {return_code}")
-                    
-                    # Capture all the outputs when the process finishes
-                    stdout_data, stderr_data = self.simulation_process.communicate()
-                    
-                    # TODO dumpt this to a log.
-                    print("Final output:")
-                    print(stdout_data.decode())
-                    print(stderr_data.decode())
-
-                    # Close the socket.
-                    self.connection.close()
-                
-                    break
-                        
-                # Get the new observation and reward.
-                buf = self.connection.recv(self.msg_len).decode("utf-8")
-                if len(buf) > 0:
-                    print("Python got:", buf)
-                    
-        except Exception as e:
-            print(f"An error occurred: {e}")
-
-        finally:
-            # Cleanup: Close TCP connection and terminate the subprocess if still running
-            print("Cleaning up...")
-            
-            if self.simulation_process.poll() is None:
-                print("Terminating simulation process...")
-                self.simulation_process.terminate()
-                self.simulation_process.wait()
-                
-
-
-stdout_data, stderr_data = simulation_process.communicate()
-print(stdout_data.decode())
-"""
