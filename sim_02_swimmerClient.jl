@@ -92,7 +92,7 @@ function finalise(logfile, episode_path, frames, episode_history)
 
     # Save all data to a csv.
     open(joinpath(episode_path, "episodeHistory.csv"); write=true) do f
-        write(f, "x, y, uFlow, vFlow, u, v, dTarget\n")
+        write(f, "x, y, uFlow, vFlow, u, v, dTarget, reward\n")
         writedlm(f, episode_history, ',')
     end
 end
@@ -162,13 +162,13 @@ try
             vSet = [cos(theta), sin(theta)] .* Vmax
             
             # Update episode stats.
-            push!(episode_history, vcat(pos, vFlow, vSet, dTarget))
+            push!(episode_history, vcat(pos, vFlow, vSet, dTarget, reward))
 
             # Update position using the Euler approach.
             pos = pos .+ (vSet .+ vFlow) .* dt
             
             # Log.
-            msg = "  x_swimmer=$pos, d_target=$dTarget, action=$actions[1]\n"
+            msg = "  x_swimmer=$pos, d_target=$dTarget, action=$actions, reward=$reward\n"
             write(logfile, msg)
             flush(logfile)
             
