@@ -119,3 +119,18 @@ function sendMessage(data, sock; length=128, counter=nothing)
     flush(sock)
 end
 
+function assembleStateVector(xEnd, pos, vFlow)
+    # State is relative position to the target (unit vector) and 
+    # flow velocity at the swimmer's position (bounded to <-Uinf, Uinf>).
+    vecToTarget = xEnd .- pos
+    dToTarget = norm2(vecToTarget)
+    vecToTarget /= max(1e-6, dToTarget)
+    state = [
+        vecToTarget[1],
+        vecToTarget[2],
+        max(-1, min(1, vFlow[1])),
+        max(-1, min(1, vFlow[2]))
+    ]
+    return state, dToTarget
+end
+

@@ -1,87 +1,86 @@
-# TODO
-# - Create a subprocess that runs a single simulation with a given episode info
-# - get the initial random conditions via tcp from WL
-# - get state info after each time step via tcp from WL
-# TODO
-
 import subprocess
 import socket
 import time
 import os
+import numpy as np
 
-episodeId = "commsTestEpisode"
+import sb3_contrib
+import stable_baselines3
+import gymnasium
+import typing
+from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv
+from stable_baselines3.common.noise import NormalActionNoise, VectorizedActionNoise
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.preprocessing import get_action_dim, get_obs_shape
+from stable_baselines3.common.buffers import BaseBuffer, ReplayBuffer
 
-# Spawn the simulation process.
-portNumber = 8091
-simulation_process = subprocess.Popen(
-    ["julia", "sim_02_swimmerClient.jl", episodeId, "{:d}".format(portNumber)],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    preexec_fn=os.setsid
-)
+import resources
 
-# Wait a bit and open a socket.
-time.sleep(1.)
-serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-serversocket.bind(('localhost', portNumber))
-serversocket.listen(5) # become a server socket, maximum 5 connections
-connection, address = serversocket.accept()
-print("Server listening")
+# Instantiate the env and a deterministic agent.
+env_eval = resources.WLEnv()
+agent = resources.DummySwimmerAgent()
 
-try:
-    # Receive the initial handshake with start conditions etc.
-    while True:
-        time.sleep(0.5)
-        buf = connection.recv(128).decode("utf-8")
-        if len(buf) > 0:
-            print("Python got initial:", buf)
-            break
+# Run a trial evaluation
+nStepsMax = 200
 
-    # Keep running the simulation.
-    while True:
-        # Chill for a bit.
-        time.sleep(0.5)
-        print("I'm alive")
-        
-        # Check if the process has finished
-        return_code = simulation_process.poll()
-        if return_code is not None:
-            print(f"Simulation finished with exit code {return_code}")
-            
-            # Capture all the outputs when the process finishes
-            stdout_data, stderr_data = simulation_process.communicate()
-            print("Final output:")
-            print(stdout_data.decode())
-            print(stderr_data.decode())
+obs, info = env_eval.reset()
+episodeData = [resources.concatEpisodeData(obs, np.zeros(len(env_eval.action_space.sample())), 0.)]
 
-            # Close the socket.
-            connection.close()
-        
-            break
-                
-        # Send a message and wait for return.
-        buf = connection.recv(128).decode("utf-8")
-        if len(buf) > 0:
-            print("Python got:", buf)
-            length = 128
-            msg = bytes("got data! 1 2 3\n", 'UTF-8')
-            padded_message = msg[:length].ljust(length, b'\0')
-            print("Python sending:", padded_message)
-            connection.sendall(padded_message)
-       
-except Exception as e:
-    print(f"An error occurred: {e}")
+for i in range(nStepsMax):
+    action, _states = agent.predict(obs, deterministic=True)
+    obs, reward, terminated, truncated, info = env_eval.step(action)
+    episodeData.append(resources.concatEpisodeData(obs, action, reward))
+    if terminated:
+        break
 
-finally:
-    # Cleanup: Close TCP connection and terminate the subprocess if still running
-    print("Cleaning up...")
-    
-    if simulation_process.poll() is None:
-        print("Terminating simulation process...")
-        simulation_process.terminate()  # Or simulation_process.kill()
-        simulation_process.wait()  # Wait for it to terminate
-    
+episodeData = pandas.DataFrame(episodeData)
+
+
 """
+        try:
+            # Keep running the simulation.
+            while True:
+                # Chill for a bit.
+                time.sleep(0.5)
+                print("I'm alive")
+                
+                # Check if the process has finished
+                return_code = self.simulation_process.poll()
+                if return_code is not None:
+                    print(f"Simulation finished with exit code {return_code}")
+                    
+                    # Capture all the outputs when the process finishes
+                    stdout_data, stderr_data = self.simulation_process.communicate()
+                    
+                    # TODO dumpt this to a log.
+                    print("Final output:")
+                    print(stdout_data.decode())
+                    print(stderr_data.decode())
+
+                    # Close the socket.
+                    self.connection.close()
+                
+                    break
+                        
+                # Get the new observation and reward.
+                buf = self.connection.recv(self.msg_len).decode("utf-8")
+                if len(buf) > 0:
+                    print("Python got:", buf)
+                    
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+        finally:
+            # Cleanup: Close TCP connection and terminate the subprocess if still running
+            print("Cleaning up...")
+            
+            if self.simulation_process.poll() is None:
+                print("Terminating simulation process...")
+                self.simulation_process.terminate()
+                self.simulation_process.wait()
+                
+
+
 stdout_data, stderr_data = simulation_process.communicate()
 print(stdout_data.decode())
 """
