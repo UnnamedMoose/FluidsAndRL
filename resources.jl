@@ -4,7 +4,7 @@ import Printf.@sprintf
 
 # NOTE: stolen from WaterLily.jl/examples/TwoD_plots.jl
 function flood(f::Array; shift=(0.,0.), cfill=:RdBu_11, clims=(), levels=10, kv...)
-    if length(clims)==2
+    if length(clims) == 2
         @assert clims[1]<clims[2]
         @. f=min(clims[2], max(clims[1], f))
     else
@@ -32,6 +32,32 @@ function flowInterp(xi, arr)
     res = a*(transpose(xx)*b)
     return res
 end
+
+function send(data, sock; length=128, counter=nothing)
+    """ Send a series of floats. Optionally, prepend an int at the start of the message. """
+    if counter == nothing
+        prefix = ""
+    else
+        prefix = string(counter)
+    end
+    formatted_data = map(x -> @sprintf("%.6e", x), data)
+    message = join(formatted_data, " ")
+    padded_message = rpad(prefix * " " * message, length, " ")
+    write(sock, padded_message)
+    flush(sock)
+end
+
+function receive(sock; length=128, T=Float32)
+    """ Receive a series of floats and parse them. """
+    msg = read(sock, length)
+    msg = strip(String(msg), '\0')
+    data = [parse(T, value) for value in split(msg)]
+    return data
+end
+    
+# =================
+# Swimmer-specific.
+# =================
 
 function random_point_in_circle(x0, y0, r)
     # Generate a random angle between 0 and 2π
@@ -102,21 +128,6 @@ function plot_snapshot(sim, x0, R, x0Start, Rstart, x0End, Rend, rlDomainMin,
     savefig(joinpath(figDir, fname))
     
     return fname
-end
-
-function sendMessage(data, sock; length=128, counter=nothing)
-    if counter == nothing
-        prefix = ""
-    else
-        prefix = string(counter)
-    end
-    formatted_data = map(x -> @sprintf("%.6e", x), data)
-    message = join(formatted_data, " ")
-    padded_message = rpad(prefix * " " * message, length, " ")
-#    println("Julia sending: ", padded_message)
-    write(sock, padded_message)
-#    println("Julia sent")
-    flush(sock)
 end
 
 function assembleStateVector(xEnd, pos, vFlow)

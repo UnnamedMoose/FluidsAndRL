@@ -35,8 +35,8 @@ Vmax = T(1.2)
 dTargetThresholdSuccess = T(0.1)
 dt = T(0.5)
 # This excludes the initial ramp-up time used to let the flow develop
-max_steps = 100
-n_steps_startup = 20 + rand(1:10)
+max_steps = 300
+n_steps_startup = 20 + rand(1:50)
 # Circle radius and origin.
 R = M*RbyM
 x0 = T.([M/2, M/2])
@@ -49,7 +49,7 @@ Rend = T(4*R)
 rlDomainMin = T.([1.0, -10.0] .* R .+ x0)
 rlDomainMax = T.([20.0, 10.0] .* R .+ x0)
 # How close is close enough.
-rThresholdEnd = 0.1
+rThresholdEnd = 4.
 
 # Generate random start and end points.
 xStart = random_point_in_circle(x0Start[1], x0Start[2], Rstart)
@@ -113,7 +113,8 @@ try
         iStep += 1
         
         # Log.
-        msg = "Current time $t, time step $iStep\n"
+        nSteps = length(timevals)
+        msg = "Current time $t, time step $iStep out of $nSteps\n"
         write(logfile, msg)
         flush(logfile)
 
@@ -134,7 +135,7 @@ try
             end
             
             # See if this is the last time step.
-            if abs(t-timevals[end]) < 1e-3
+            if iStep == length(timevals)
                 write(logfile, "Final time step reached!")
                 flush(logfile)
                 done = 1
@@ -147,16 +148,16 @@ try
             
             # Send observation data. On the first pass this will be returned by the
             # reset() function on the python side with a dummy reward
-            sendMessage(vcat(obs, reward, done), sock; length=msg_len, counter=iStep)
+            send(vcat(obs, reward, done), sock; length=msg_len, counter=iStep)
             
             # Receive the action vector (in this case one value).
-            msg = read(sock, msg_len)
-            msg = strip(String(msg), '\0')
-            actions = [parse(T, action) for action in split(msg)]
+            actions = receive(sock; length=msg_len, T=T)
+#            msg = read(sock, msg_len)
+#            msg = strip(String(msg), '\0')
+#            actions = [parse(T, action) for action in split(msg)]
 
             # Translate the action value in range <-1, 1> into set heading in range <-pi, pi>
             theta = actions[1]*pi
-            #theta = max(0, min(2*pi, (actions[1]+1)*pi))
 
             # Set velocity along the desired heading.
             vSet = [cos(theta), sin(theta)] .* Vmax
@@ -174,7 +175,9 @@ try
             
             # Compute the reward for the last action. This will be returned during the next pass.
             # The same as in Gunnarson et al. (2021), eq. 3
-            reward = -dt + 10*(dTargetOld - dTarget)/Vmax
+            #reward = -dt + 10*(dTargetOld - dTarget)/Vmax
+            # Tweaked for WL.
+            reward = -dt + (dTargetOld - dTarget)/Vmax/R
 
             # Also check if outside of bounds.
             done = 0

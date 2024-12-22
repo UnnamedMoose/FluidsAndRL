@@ -24,19 +24,19 @@ agent = resources.DummySwimmerAgent()
 # Run a trial evaluation
 nStepsMax = 200
 
-#try:
-obs, info = env_eval.reset()
-episodeData = [resources.concatEpisodeData(obs, np.zeros(len(env_eval.action_space.sample())), 0.)]
+try:
+    obs, info = env_eval.reset()
+    episodeData = [resources.concatEpisodeData(obs, np.zeros(len(env_eval.action_space.sample())), 0.)]
 
-for i in range(nStepsMax):
-    action, _states = agent.predict(obs, deterministic=True)
-    obs, reward, terminated, truncated, info = env_eval.step(action)
-    episodeData.append(resources.concatEpisodeData(obs, action, reward))
-    if terminated:
-        break
+    for i in range(nStepsMax):
+        action, _states = agent.predict(obs, deterministic=True)
+        obs, reward, terminated, truncated, info = env_eval.step(action)
+        episodeData.append(resources.concatEpisodeData(obs, action, reward))
+        if terminated:
+            break
 
-episodeData = pandas.DataFrame(episodeData)
+    episodeData = pandas.DataFrame(episodeData)
 
-#finally:
-env_eval.close()
+finally:
+    env_eval.close()
 

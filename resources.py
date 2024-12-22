@@ -6,6 +6,10 @@ import numpy as np
 import gymnasium
 import typing
 
+# ========================================================
+# Generic functions and classes for WL and RL interfacing.
+# ========================================================
+
 def isSimRunning(simulation_process, verbose=True):
     return_code = simulation_process.poll()
     if return_code is not None:
@@ -26,9 +30,14 @@ def isSimRunning(simulation_process, verbose=True):
         return True, None
 
 
+def send(data, connection, msg_len=124):
+    msg = bytes(" ".join(["{:.6e}".format(value) for value in data]) + "\n", 'UTF-8')
+    padded_message = msg[:msg_len].ljust(msg_len, b'\0')
+    connection.sendall(padded_message)
+
+
 def receive(connection, simulation_process, logdir, msg_len=128, delay=0.1):
     # Receive the initial handshake with the first observation.
-# xTODO this is a bit unsafe, add try except here or some timeout.
     while True:
         time.sleep(delay)
 
@@ -85,15 +94,16 @@ class WLEnv(gymnasium.Env):
         initial observation. """
 
         # TODO change for subsequent episodes.        
-        self.portNumber = 8092
+        self.port_number = 8092
         self.episode_dir = "episode_commsTestEpisode"
+        self.sim_exe = "sim_02_swimmerClient.jl"
         
         # Check if a previous process needs to be killed.
         self.killSim()
         
         # Spawn the simulation process.
         self.simulation_process = subprocess.Popen(
-            ["julia", "sim_02_swimmerClient.jl", self.episode_dir, "{:d}".format(self.portNumber)],
+            ["julia", self.sim_exe, self.episode_dir, "{:d}".format(self.port_number)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=os.setsid
@@ -102,11 +112,11 @@ class WLEnv(gymnasium.Env):
         # Wait a bit and open a socket.
         time.sleep(1.)
         serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        serversocket.bind(('localhost', self.portNumber))
+        serversocket.bind(('localhost', self.port_number))
         # become a server socket, maximum 5 connections
         serversocket.listen(5)
         self.connection, address = serversocket.accept()
-        print(f"Server listening on port {self.portNumber}")
+        print(f"Server listening on port {self.port_number}")
 
         # Receive the initial handshake with the first observation.
         simOk, buf = receive(self.connection, self.simulation_process, self.episode_dir, msg_len=self.msg_len)
@@ -132,11 +142,7 @@ class WLEnv(gymnasium.Env):
         # be returned via sockets.
         
         # Send the action.
-        # TODO wrap into a separate function.
-        msg = bytes(" ".join(["{:.6e}".format(a) for a in action]) + "\n", 'UTF-8')
-        padded_message = msg[:self.msg_len].ljust(self.msg_len, b'\0')
-        #print("Python sending:", padded_message)
-        self.connection.sendall(padded_message)
+        send(action, self.connection, msg_len=self.msg_len)
        
         # Get the new observation and reward.
         simOk, buf = receive(self.connection, self.simulation_process, self.episode_dir, msg_len=self.msg_len)
@@ -167,15 +173,6 @@ class WLEnv(gymnasium.Env):
     def close(self):
         self.killSim()
 
-class DummySwimmerAgent(object):
-    def predict(self, obs, deterministic=True):
-        try:
-            return np.array([np.arctan2(obs[1], obs[0]) / np.pi]), None
-        except AttributeError:
-            # During training, this gets given an obs and info as a tuple
-            obs = obs[0]
-            return np.array([np.arctan2(obs[1], obs[0]) / np.pi]), None
-
 
 def concatEpisodeData(obs, actions, reward):
     ed = {}
@@ -185,4 +182,24 @@ def concatEpisodeData(obs, actions, reward):
     for i in range(len(actions)):
         ed[f"a{i:d}"] = actions[i]
     return ed
+
+
+# =============================
+# Specific to the swimmer case
+# =============================
+
+
+class DummySwimmerAgent(object):
+    """ Sets the heading directly towards the target, assuming the first two
+    values of the observations vector are unit vector components pointing towards
+    the target. """
+    def predict(self, obs, deterministic=True):
+        try:
+            return np.array([np.arctan2(obs[1], obs[0]) / np.pi]), None
+        except AttributeError:
+            # During training, this gets given an obs and info as a tuple
+            obs = obs[0]
+            return np.array([np.arctan2(obs[1], obs[0]) / np.pi]), None
+
+
 
