@@ -76,16 +76,52 @@ class WLEnv(gymnasium.Env):
     
     def __init__(self, n_state_vars=2, n_action_vars=1, msg_len=128, max_episode_steps=300):
         self.max_episode_steps = max_episode_steps
-        self.msg_len = msg_len
         self.observation_space = gymnasium.spaces.Box(-1., 1., shape=(n_state_vars,), dtype=np.float64)
+        self.n_action_vars = n_action_vars
         self.action_space = gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(n_action_vars,), dtype=np.float64)
         self.simulation_process = None
+        
+        # Length of the message after formatting values to text and padding. Should
+        # be long enough to enclose the entire data packet, otherwise data loss will occur.
+        self.msg_len = msg_len
+        
+        # Delay in seconds for giving Julia time to finish a simulation in the middle
+        # of a time step. Should be considerably longer than the wall time per time step
+        # but not infite.
+        self.kill_time_delay = 5.
+        
+        # Delay in seconds between starting a simulation process and opening the socket.
+        # Shouldn't really change much.
+        self.start_time_delay = 1.
     
     def killSim(self):
         if self.simulation_process is not None:
             if self.simulation_process.poll() is None:
+                # Create a killfile.
+                print("Terminate, terminate!")
+                with open(os.path.join(self.episode_dir, "killfile"), "w") as f:
+                    f.write("Terminate, terminate!")
+                    
+                # Write some random data to the socket to prevent it locking up.
+                send(np.zeros(self.n_action_vars), self.connection, msg_len=self.msg_len)
+        
+                # Wait a bit to give Julia time to wrap things up in an orderly fashion.
+                time.sleep(self.kill_time_delay)
+                
+                # Force kill.
                 self.simulation_process.terminate()
                 self.simulation_process.wait()
+                
+                # Grab output and log.
+                stdout_data, stderr_data = self.simulation_process.communicate()
+                log = stdout_data.decode() + stderr_data.decode()
+                with open(os.path.join(self.episode_dir, "log_server.txt"), "w") as logfile:
+                    logfile.write(log)
+                    
+                
+                print("Final output:")
+                print(log)
+                    
                 return True
         return False
 
@@ -110,7 +146,7 @@ class WLEnv(gymnasium.Env):
         )
 
         # Wait a bit and open a socket.
-        time.sleep(1.)
+        time.sleep(self.start_time_delay)
         serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         serversocket.bind(('localhost', self.port_number))
         # become a server socket, maximum 5 connections

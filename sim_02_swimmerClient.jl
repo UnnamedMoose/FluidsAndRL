@@ -15,9 +15,6 @@ include("resources.jl")
 episode_path = ARGS[1]
 socket_id = parse(Int, ARGS[2])
 
-# Connect to Python server
-sock = connect("127.0.0.1", socket_id)
-
 # Main settings.
 # For TCP message size. Needs to be consistent with what the server uses.
 msg_len = 128
@@ -36,7 +33,7 @@ dTargetThresholdSuccess = T(0.1)
 dt = T(0.5)
 # This excludes the initial ramp-up time used to let the flow develop
 max_steps = 300
-n_steps_startup = 20 + rand(1:50)
+n_steps_startup = 10 + rand(1:5)
 # Circle radius and origin.
 R = M*RbyM
 x0 = T.([M/2, M/2])
@@ -58,6 +55,9 @@ pos = copy(xStart)
 
 # === main ===
 #@assert CUDA.functional()
+
+# Connect to Python server
+sock = connect("127.0.0.1", socket_id)
 
 # Prepare the output directory.
 if isdir(episode_path)
@@ -137,6 +137,11 @@ try
             # See if this is the last time step.
             if iStep == length(timevals)
                 write(logfile, "Final time step reached!")
+                flush(logfile)
+                done = 1
+            end
+            if isfile(episode_path*"/killfile")
+                write(logfile, "Killfile found! Terminating, terminating!")
                 flush(logfile)
                 done = 1
             end
