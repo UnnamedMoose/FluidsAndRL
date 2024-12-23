@@ -10,7 +10,7 @@ import typing
 # Generic functions and classes for WL and RL interfacing.
 # ========================================================
 
-def isSimRunning(simulation_process, verbose=True):
+def isSimRunning(simulation_process, verbose=False):
     return_code = simulation_process.poll()
     if return_code is not None:
         if verbose:
@@ -74,13 +74,26 @@ class WLEnv(gymnasium.Env):
     data fits within this length.
     """
     
-    def __init__(self, n_state_vars=2, n_action_vars=1, msg_len=128, max_episode_steps=300):
+    def __init__(self, sim_exe, episode_dir, n_state_vars=4, n_action_vars=1, msg_len=128, kill_time_delay=5.,
+            max_episode_steps=300, base_port_number=8092, port_increment=0,):
         self.max_episode_steps = max_episode_steps
         self.observation_space = gymnasium.spaces.Box(-1., 1., shape=(n_state_vars,), dtype=np.float64)
         self.n_action_vars = n_action_vars
         self.action_space = gymnasium.spaces.Box(low=-1.0, high=1.0, shape=(n_action_vars,), dtype=np.float64)
-        self.simulation_process = None
         
+        # This is the secret tool that we will need later.
+        self.simulation_process = None
+        self.connection = None
+        
+        # Julia sim to run.
+        self.sim_exe = sim_exe
+        
+        # Increment can be used to have several simulations run concurrently.
+        self.port_number = base_port_number + port_increment
+        # Note that episode dir will be appendded with total episode count.
+        self.base_episode_dir = episode_dir
+        self.n_episodes = 0
+                
         # Length of the message after formatting values to text and padding. Should
         # be long enough to enclose the entire data packet, otherwise data loss will occur.
         self.msg_len = msg_len
@@ -88,7 +101,7 @@ class WLEnv(gymnasium.Env):
         # Delay in seconds for giving Julia time to finish a simulation in the middle
         # of a time step. Should be considerably longer than the wall time per time step
         # but not infite.
-        self.kill_time_delay = 5.
+        self.kill_time_delay = kill_time_delay
         
         # Delay in seconds between starting a simulation process and opening the socket.
         # Shouldn't really change much.
@@ -98,11 +111,11 @@ class WLEnv(gymnasium.Env):
         if self.simulation_process is not None:
             if self.simulation_process.poll() is None:
                 # Create a killfile.
-                print("Terminate, terminate!")
                 with open(os.path.join(self.episode_dir, "killfile"), "w") as f:
                     f.write("Terminate, terminate!")
                     
                 # Write some random data to the socket to prevent it locking up.
+                # (Guess how I found out this was necessary?)
                 send(np.zeros(self.n_action_vars), self.connection, msg_len=self.msg_len)
         
                 # Wait a bit to give Julia time to wrap things up in an orderly fashion.
@@ -112,31 +125,29 @@ class WLEnv(gymnasium.Env):
                 self.simulation_process.terminate()
                 self.simulation_process.wait()
                 
-                # Grab output and log.
-                stdout_data, stderr_data = self.simulation_process.communicate()
-                log = stdout_data.decode() + stderr_data.decode()
+                # Grab output and log it.
+                _, log = isSimRunning(self.simulation_process)
                 with open(os.path.join(self.episode_dir, "log_server.txt"), "w") as logfile:
                     logfile.write(log)
-                    
                 
-                print("Final output:")
-                print(log)
+                # Close the socket.
+                self.connection.close()
                     
                 return True
+        
         return False
 
     def reset(self, seed: typing.Optional[int] = None, options: typing.Optional[dict] = None):
         """ Submit the simulation and wait until it starts to run. This will provide the
         initial observation. """
 
-        # TODO change for subsequent episodes.        
-        self.port_number = 8092
-        self.episode_dir = "episode_commsTestEpisode"
-        self.sim_exe = "sim_02_swimmerClient.jl"
-        
         # Check if a previous process needs to be killed.
         self.killSim()
-        
+
+        # Set the new count and make a unique path.
+        self.n_episodes += 1
+        self.episode_dir = self.base_episode_dir+f"_ep_{self.n_episodes:d}"
+                
         # Spawn the simulation process.
         self.simulation_process = subprocess.Popen(
             ["julia", self.sim_exe, self.episode_dir, "{:d}".format(self.port_number)],
@@ -148,6 +159,8 @@ class WLEnv(gymnasium.Env):
         # Wait a bit and open a socket.
         time.sleep(self.start_time_delay)
         serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Enable SO_REUSEADDR to reuse the port
+        serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         serversocket.bind(('localhost', self.port_number))
         # become a server socket, maximum 5 connections
         serversocket.listen(5)
@@ -189,8 +202,8 @@ class WLEnv(gymnasium.Env):
             reward = float(buf.split()[-2])
             done = float(buf.split()[-1]) > 0.5
         else:
-            # This shouldn't happen...
-            print("Bad sim, bad!")
+            # This shouldn't happen but it does during the last time step when training with SBL.
+            #print("Bad sim, bad!")
             observation = None
             reward = 0
             done = True

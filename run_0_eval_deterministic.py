@@ -8,7 +8,7 @@ import pandas
 import resources
 
 # Instantiate the env and a deterministic agent.
-env_eval = resources.WLEnv()
+env_eval = resources.WLEnv("sim_02_swimmerClient.jl", "episode_commsTestEpisode")
 agent = resources.DummySwimmerAgent()
 
 # Run a trial evaluation

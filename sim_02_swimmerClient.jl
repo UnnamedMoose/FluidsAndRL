@@ -82,7 +82,10 @@ dTargetOld = nothing
 iStep = 0
 
 # For wrapping up the episode.
-function finalise(logfile, episode_path, frames, episode_history)
+function finalise(sock, logfile, episode_path, frames, episode_history)
+    # Close the socket.
+    close(sock)
+    
     # Clean up the log.
     close(logfile)
     
@@ -148,7 +151,7 @@ try
             
             # Finish up?
             if done > 0
-                finalise(logfile, episode_path, frames, episode_history)
+                finalise(sock, logfile, episode_path, frames, episode_history)
             end
             
             # Send observation data. On the first pass this will be returned by the
@@ -182,7 +185,7 @@ try
             # The same as in Gunnarson et al. (2021), eq. 3
             #reward = -dt + 10*(dTargetOld - dTarget)/Vmax
             # Tweaked for WL.
-            reward = -dt + (dTargetOld - dTarget)/Vmax/R
+            reward = -dt + 2*(dTargetOld - dTarget)/Vmax/R
 
             # Also check if outside of bounds.
             done = 0
