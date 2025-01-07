@@ -11,6 +11,13 @@ import selectors
 # Main idea: start N subprocesses, each with a different port. Have each julia process
 # make a step and return a message after it receives an update.
 
+def send(data, connection, msg_len=128):
+    msg = bytes(" ".join(["{:.6e}".format(value) for value in data]) + "\n", 'UTF-8')
+    padded_message = msg[:msg_len].ljust(msg_len, b'\0')
+    print("Sending:", padded_message)
+    connection.sendall(padded_message)
+
+
 def accept_connection(server_sock):
     conn, addr = server_sock.accept()
     conn.setblocking(False)
@@ -20,13 +27,15 @@ def accept_connection(server_sock):
 
 def handle_client(conn):
     try:
-        data = conn.recv(1024)
+        data = conn.recv(128)
         if data:
             laddr = conn.getsockname()
             raddr = conn.getpeername()
         
             print(f"Received: {data.decode()} from {laddr}")
-            conn.sendall(f"Echo: {data.decode()}".encode())
+            
+            send([10., 20., 30.], conn)
+            #conn.sendall(f"Echo: {data.decode()}".encode())
         else:
             print("Client disconnected")
             sel.unregister(conn)
@@ -43,6 +52,7 @@ ports = [8089, 8089+1, 8089+2]
 
 for port in ports:
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind(("localhost", port))
     server_sock.listen(5)
     server_sock.setblocking(False)
