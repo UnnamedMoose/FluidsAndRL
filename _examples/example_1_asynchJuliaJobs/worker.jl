@@ -29,22 +29,18 @@ socket_id = parse(Int, ARGS[1])
 # Connect to Python server
 sock = connect("127.0.0.1", socket_id)
 
-# Imitate a CFD loop.
+# Imitate a CFD time loop with an unknown number of time steps.
 data = [1.0, 2.0, 3.0]
 msg_len = 128
 
-for iStep in 1:10
+nSteps = rand(5:10)
+for iStep in 1:nSteps
     # Send the data.
     send(data, sock; length=msg_len, counter=iStep)
     
-    # Receive response
-    msg = read(sock, 128)
-    msg = strip(String(msg), '\0')
-    println(iStep, ": ", msg)
-    
     # Receive a vector of values.
-    #actions = receive(sock; length=msg_len, T=Float32)
-    #println(iStep, ": ", actions)
+    actions = receive(sock; length=msg_len, T=Float32)
+    println(iStep, ": ", actions)
     
     sleep(1)
 end

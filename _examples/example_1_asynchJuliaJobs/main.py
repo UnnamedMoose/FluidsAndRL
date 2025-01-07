@@ -1,51 +1,82 @@
 import socket
 import time
 import selectors
-#import os
-#import numpy as np
-#import pandas
-#import datetime
+import os
+import numpy as np
+import pandas
+import datetime
 #import torch
-#import subprocess
+import subprocess
 
 # Main idea: start N subprocesses, each with a different port. Have each julia process
 # make a step and return a message after it receives an update.
 
+
 def send(data, connection, msg_len=128):
     msg = bytes(" ".join(["{:.6e}".format(value) for value in data]) + "\n", 'UTF-8')
     padded_message = msg[:msg_len].ljust(msg_len, b'\0')
-    print("Sending:", padded_message)
+    #print("Sending:", padded_message)
     connection.sendall(padded_message)
 
 
-def accept_connection(server_sock):
+def accept_connection(server_sock, ports):
     conn, addr = server_sock.accept()
+    laddr = conn.getsockname()
+    iWorker = ports.index(laddr[1])
     conn.setblocking(False)
-    print(f"Connection from {addr}")
+    print(f"Connection from port {laddr}")
     sel.register(conn, selectors.EVENT_READ, handle_client)
+    return iWorker, True, None
 
-
-def handle_client(conn):
+def handle_client(conn, ports):
     try:
         data = conn.recv(128)
         if data:
             laddr = conn.getsockname()
             raddr = conn.getpeername()
-        
-            print(f"Received: {data.decode()} from {laddr}")
+            iWorker = ports.index(laddr[1])
+
+            print(f"Received from worker {iWorker:d} on {laddr}: {data.decode()}")
             
             send([10., 20., 30.], conn)
-            #conn.sendall(f"Echo: {data.decode()}".encode())
+            
+            vals = data.decode().split()
+            vals = [int(vals[0])] + [float(v) for v in vals[1:]]
+            return iWorker, True, vals
+            
         else:
-            print("Client disconnected")
+            laddr = conn.getsockname()
+            iWorker = ports.index(laddr[1])
+            print(f"Client {iWorker:d} on {laddr} disconnected")
             sel.unregister(conn)
             conn.close()
+            return iWorker, False, None
+
     except ConnectionResetError:
         print("Connection reset by peer")
         sel.unregister(conn)
         conn.close()
 
 
+def kill_process(simulation_process):
+    if simulation_process.poll() is None:
+        # Create a killfile.
+#                with open(os.path.join(self.episode_dir, "killfile"), "w") as f:
+#                    f.write("Terminate, terminate!")
+            
+        # Write some random data to the socket to prevent it locking up.
+        # (Guess how I found out this was necessary?)
+#                send(np.zeros(self.n_action_vars), self.connection, msg_len=self.msg_len)
+
+        # Wait a bit to give Julia time to wrap things up in an orderly fashion.
+#                time.sleep(self.kill_time_delay)
+        
+        # Force kill.
+        simulation_process.terminate()
+        simulation_process.wait()
+
+
+# Create the sockets used for comms.
 sel = selectors.DefaultSelector()
 server_sockets = []
 ports = [8089, 8089+1, 8089+2]
@@ -61,66 +92,72 @@ for port in ports:
 
 print("Servers are listening on ports:", ports)
 
-# Main loop to poll events
-while True:
+# Main loop to submit jobs, poll events, and get data back.
+collectedData = []
+isRunning = [False for _ in range(len(ports))]
+simulation_processes = [None for _ in range(len(ports))]
+jobIds = [-1 for _ in range(len(ports))]
+jobCount = 0
+
+while len(collectedData) < 50:
     time.sleep(0.5)
-    print("I'm alive")
+    
+    # Check if all jobs slots are active. Submit a new simulation if not.
+    for iWorker, port in enumerate(ports):
+        if not isRunning[iWorker]:
+            jobCount += 1
+            
+            jobIds[iWorker] = jobCount
+            simulation_processes[iWorker] =  subprocess.Popen(
+                ["julia",  "worker.jl", f"{port:d}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+            isRunning[iWorker] = True
+            
+            print(f"Started sim {jobCount:d} using slot {iWorker:d} on port {port:d}")
+            
+            # Wait some time to artificially desynchronise the processes, emulating what
+            # working with CFD might look like.
+            time.sleep(0.5 + np.random.rand()*2)
+
+    #print("I'm alive")
     events = sel.select(timeout=None)
-    print(events)
+    #print(events)
     for key, mask in events:
         callback = key.data
-        callback(key.fileobj)
+        iWorker, status, values = callback(key.fileobj, ports)
+        print(f"  {iWorker:d} returned:", status, values)
+        
+        if status and values is not None:
+            # Regular time step. Keep data.
+            now = datetime.datetime.now()
+            collectedData.append([jobIds[iWorker], iWorker, now] + values)
+        
+        elif status and values is None:
+            # First handshake with no valid data. Ignore.
+            pass
 
-"""
-while True:
-    connection, address = server.accept()
-    print("got con")
-    buf = connection.recv(64).decode("utf-8")
-    if len(buf) > 0:
-        print("Python got:", buf)
-        length = 64
-        msg = bytes("got data! 1 2 3\n", 'UTF-8')
-        padded_message = msg[:length].ljust(length, b'\0')
-        # connection.send(len(msg))
-        connection.sendall(padded_message)
-    time.sleep(0.5)
+        else:
+            # Job terminated and worker disconnected.
+            isRunning[iWorker] = False
+            
+            # Ensure proper clean up. This shouldn't be necessary here as
+            # simulation_process.poll() will not be None at this point, but you
+            # never know.
+            kill_process(simulation_processes[iWorker])
+            print(f"Worker {iWorker:d} killed the subprocess properly")
 
-connection.close()
-"""
+# Terminate running jobs.
+for iWorker in range(len(ports)):
+    if isRunning[iWorker]:
+        kill_process(simulation_processes[iWorker])
+        print(f"Worker {iWorker:d} killed the subprocess properly")
 
-"""
-nJobs = 1
-baseSocketNo = 8089
+# Get data into orderly format.
+collectedData = pandas.DataFrame(data=np.array(collectedData),
+    columns=["iJob", "iWorker", "time"] + [f"v{i:d}" for i in range(len(collectedData[0])-3)])
 
-sockets = []
-connections = []
-for iJob in range(nJobs):
-    serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    serversocket.bind(('localhost', baseSocketNo + iJob))
-    serversocket.listen(5)
-    sockets.append(serversocket)
-    
-    print(iJob, "is set up")
-    time.sleep(1)
-    print(iJob, "wants to accept")
-    connection, address = serversocket.accept()
-    connections.append(connection)
-    
-    print(iJob, "is listening on", baseSocketNo + iJob)
-
-while True:
-    time.sleep(0.5)
-
-    for iJob in range(nJobs):
-        buf = connections[iJob].recv(64).decode("utf-8")
-        if len(buf) > 0:
-            print(iJob, "got:", buf)
-            length = 64
-            msg = bytes(f"{iJob:d} got data! 1 2 3\n", 'UTF-8')
-            padded_message = msg[:length].ljust(length, b'\0')
-            connection.sendall(padded_message)
-
-for connection in connections:
-    connection.close()
-"""
+print(collectedData)
 
