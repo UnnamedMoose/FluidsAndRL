@@ -27,6 +27,7 @@ def accept_connection(server_sock, ports):
     sel.register(conn, selectors.EVENT_READ, handle_client)
     return iWorker, True, None
 
+
 def handle_client(conn, ports):
     try:
         data = conn.recv(128)

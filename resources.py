@@ -75,7 +75,7 @@ class WLEnv(gymnasium.Env):
     """
     
     def __init__(self, sim_exe, episode_dir, n_state_vars=4, n_action_vars=1, msg_len=128, kill_time_delay=5.,
-            max_episode_steps=300, base_port_number=8092, port_increment=0,):
+            max_episode_steps=300, base_port_number=8089, port_increment=0):
         self.max_episode_steps = max_episode_steps
         self.observation_space = gymnasium.spaces.Box(-1., 1., shape=(n_state_vars,), dtype=np.float64)
         self.n_action_vars = n_action_vars
@@ -83,6 +83,7 @@ class WLEnv(gymnasium.Env):
         
         # This is the secret tool that we will need later.
         self.simulation_process = None
+        self.server_sock = None
         self.connection = None
         
         # Julia sim to run.
@@ -137,7 +138,17 @@ class WLEnv(gymnasium.Env):
         
         return False
 
-    def reset(self, seed: typing.Optional[int] = None, options: typing.Optional[dict] = None):
+    def openPort(self, blocking=True):
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Enable SO_REUSEADDR to reuse the port
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind(('localhost', self.port_number))
+        # become a server socket, maximum 5 connections. This is overkill but meh.
+        self.server_sock.listen(5)
+        if not blocking:
+            self.server_sock.setblocking(False)
+        
+    def reset(self, seed: typing.Optional[int] = None, options: typing.Optional[dict] = None, asynchronous: typing.Optional[bool] = False):
         """ Submit the simulation and wait until it starts to run. This will provide the
         initial observation. """
 
@@ -149,6 +160,7 @@ class WLEnv(gymnasium.Env):
         self.episode_dir = self.base_episode_dir+f"_ep_{self.n_episodes:d}"
                 
         # Spawn the simulation process.
+#        print(["julia", self.sim_exe, self.episode_dir, "{:d}".format(self.port_number)])
         self.simulation_process = subprocess.Popen(
             ["julia", self.sim_exe, self.episode_dir, "{:d}".format(self.port_number)],
             stdout=subprocess.PIPE,
@@ -158,13 +170,21 @@ class WLEnv(gymnasium.Env):
 
         # Wait a bit and open a socket.
         time.sleep(self.start_time_delay)
-        serversocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Enable SO_REUSEADDR to reuse the port
-        serversocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        serversocket.bind(('localhost', self.port_number))
+#        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#        self.server_sock.bind(('localhost', self.port_number))
         # become a server socket, maximum 5 connections
-        serversocket.listen(5)
-        self.connection, address = serversocket.accept()
+#        self.server_sock.listen(5)
+
+        if asynchronous:
+            # Return here and let the overarching code deal with things.
+            return None, {}
+        else:
+            self.openPort()
+
+        # In serial mode, wait for proper start up.
+        self.connection, address = self.server_sock.accept()
         print(f"Server listening on port {self.port_number}")
 
         # Receive the initial handshake with the first observation.
