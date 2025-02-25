@@ -63,7 +63,7 @@ def handle_client(conn, ports):
         sel.unregister(conn)
         conn.close()
 
-
+# TODO replace with the env routine
 def kill_process(simulation_process):
     if simulation_process.poll() is None:
         # Create a killfile.
@@ -92,7 +92,7 @@ ports = []
 for i in range(nParallelJobs):
     envs.append(resources.WLEnv(
         "sim_0_dummySim.jl",
-        f"episode_parallelTraining_test_rank_{i:d}", 
+        f"episode_parallelTraining_test_worker_{i:d}", 
         n_state_vars=3,
         n_action_vars=3,
         port_increment=i
@@ -200,4 +200,6 @@ for iEp in collectedData["iEp"].unique():
     parsedData[-1]["iEp"] = iEp
 
 collectedData = pandas.concat(parsedData[:nStepsToCollect]).reset_index(drop=True)
+
+# TODO merge with the training part in v0
 
