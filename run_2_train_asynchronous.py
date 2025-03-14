@@ -9,10 +9,10 @@ import subprocess
 
 import resources
 
-def send(data, connection, msg_len=128):
-    msg = bytes(" ".join(["{:.6e}".format(value) for value in data]) + "\n", 'UTF-8')
-    padded_message = msg[:msg_len].ljust(msg_len, b'\0')
-    connection.sendall(padded_message)
+#def send(data, connection, msg_len=128):
+#    msg = bytes(" ".join(["{:.6e}".format(value) for value in data]) + "\n", 'UTF-8')
+#    padded_message = msg[:msg_len].ljust(msg_len, b'\0')
+#    connection.sendall(padded_message)
 
 
 def accept_connection(server_sock, ports):
@@ -20,7 +20,7 @@ def accept_connection(server_sock, ports):
     laddr = conn.getsockname()
     iWorker = ports.index(laddr[1])
     conn.setblocking(False)
-    print(f"Connection from port {laddr}")
+    print(f"Non-blocking connection from port {laddr}")
     sel.register(conn, selectors.EVENT_READ, handle_client)
     return iWorker, None, None, None, False
 
@@ -46,7 +46,7 @@ def handle_client(conn, ports):
             
             # TODO call agent .predict() method here
             action = np.array([10., 20., 30.])
-            send(action, conn)
+            resources.send(action, conn)
             
             return iWorker, obs, reward, action, done
             
@@ -64,8 +64,8 @@ def handle_client(conn, ports):
         conn.close()
 
 # TODO replace with the env routine
-def kill_process(simulation_process):
-    if simulation_process.poll() is None:
+#def kill_process(simulation_process):
+#    if simulation_process.poll() is None:
         # Create a killfile.
 #                with open(os.path.join(self.episode_dir, "killfile"), "w") as f:
 #                    f.write("Terminate, terminate!")
@@ -78,8 +78,8 @@ def kill_process(simulation_process):
 #                time.sleep(self.kill_time_delay)
         
         # Force kill.
-        simulation_process.terminate()
-        simulation_process.wait()
+#        simulation_process.terminate()
+#        simulation_process.wait()
 
 
 nParallelJobs = 3
@@ -91,11 +91,12 @@ envs = []
 ports = []
 for i in range(nParallelJobs):
     envs.append(resources.WLEnv(
-        "sim_0_dummySim.jl",
+        "sim_00_dummySim.jl",
         f"episode_parallelTraining_test_worker_{i:d}", 
         n_state_vars=3,
         n_action_vars=3,
-        port_increment=i
+        port_increment=i+1234,
+        verbose=True,
     ))
     envs[-1].openPort(blocking=False)
     
@@ -109,7 +110,7 @@ print("Servers are listening on ports:", ports)
 # Main loop to submit jobs, poll events, and get data back.
 collectedData = []
 isRunning = [False for _ in range(len(ports))]
-simulation_processes = [None for _ in range(len(ports))]
+#simulation_processes = [None for _ in range(len(ports))]
 jobIds = [-1 for _ in range(len(ports))]
 episodeCount = 0
 
@@ -133,6 +134,7 @@ while len(collectedData) < nStepsToCollect+episodeCount+1:
             
             # Wait some time to artificially desynchronise the processes, emulating what
             # working with CFD might look like.
+            # TODO temp
             time.sleep(0.5 + np.random.rand()*2)
 
     # Grab the observations as they come in.
@@ -159,13 +161,15 @@ while len(collectedData) < nStepsToCollect+episodeCount+1:
             # Ensure proper clean up. This shouldn't be necessary here as
             # simulation_process.poll() will not be None at this point, but you
             # never know.
-            kill_process(envs[iWorker].simulation_process)
+            envs[iWorker].killSim(brutal=True)
+            #kill_process(envs[iWorker].simulation_process)
             print(f"Worker {iWorker:d} killed the subprocess properly")
 
 # Terminate running jobs.
 for iWorker in range(len(ports)):
     if isRunning[iWorker]:
-        kill_process(envs[iWorker].simulation_process)
+        envs[iWorker].killSim(brutal=True)
+        #kill_process(envs[iWorker].simulation_process)
         print(f"Worker {iWorker:d} killed the subprocess properly")
 
 # Get data into orderly format.
@@ -186,6 +190,7 @@ for iEp in collectedData["iEp"].unique():
     
     # Time per time step in seconds.
     t = (df["time"].values[1:] - df["time"].values[:-1]).astype(float)[:, np.newaxis] / 1e9
+
     # State-action-reward transition data.
     obs = df[x_obs].values[:-1]
     action = df[x_act].values[:-1]

@@ -17,14 +17,15 @@ end
 
 function receive(sock; length=64, T=Float32)
     """ Receive a series of floats and parse them. """
+    local msg
     msg = read(sock, length)
     msg = strip(String(msg), '\0')
     data = [parse(T, value) for value in split(msg)]
     return data
 end
 
-
 socket_id = parse(Int, ARGS[2])
+println(socket_id)
 
 logfile = open("log_client_$(socket_id).txt", "w")
 
@@ -39,6 +40,7 @@ msg_len = 128
 
 nSteps = rand(5:10)
 for iStep in 1:nSteps
+    local msg
     msg = "Started step $iStep\n"; write(logfile, msg); flush(logfile)
     
     # Send the data.

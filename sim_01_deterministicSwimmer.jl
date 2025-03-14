@@ -44,7 +44,8 @@ xEnd = random_point_in_circle(x0End[1], x0End[2], Rend)
 pos = copy(xStart)
 
 # === main ===
-#@assert CUDA.functional()
+@assert CUDA.functional()
+println(CUDA.device())
 
 if isdir(episode_path)
     println("Overwriting previous episode data! You have only yourself to blame for this!")
@@ -54,8 +55,9 @@ mkdir(episode_path)
 
 U = 1
 body = AutoBody((x,t)->√sum(abs2, x .- x0) - R)
-sim = Simulation((N, M), (U, 0), R; ν=U*R/Re, body=body, T=T)#, mem=CUDA.CuArray)
+#sim = Simulation((N, M), (U, 0), R; ν=U*R/Re, body=body, T=T, mem=CUDA.CuArray)
 
+#=
 timevals = range(0, (n_steps_startup+max_steps)*dt, step=dt)
 frames = []
 episode_history = []
@@ -77,16 +79,6 @@ for t in timevals
         vFlow = [flowInterp(pos, sim.flow.u[:, :, 1]),
                 flowInterp(pos, sim.flow.u[:, :, 2])]
 
-       # Set the state and target distance.
-    #state, dTargetOld = assembleStateVector(xEnd, pos, vFlow)
-    
-    # Translate the action value in range <-1, 1> into set heading in range <0, 2pi>
-#    theta = max(0, min(2*pi, (a[1]+1)*pi))
-
-    # Set velocity along the desired heading.
-#    vSet = [cos(theta), sin(theta)] .* env.params.Vmax
-
-
         # Set velocity  to point directly towards the target.
         dTarget = norm2(xEnd .- pos)
         vSet = (xEnd .- pos) / dTarget * Vmax
@@ -105,6 +97,8 @@ for t in timevals
 #        push!(frames, fname)
     end
 end
+
+=#
 
 # Convert frames to a gif.
 #anim = Animation(episode_path, frames)

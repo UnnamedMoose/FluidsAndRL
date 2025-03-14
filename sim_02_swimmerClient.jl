@@ -32,8 +32,9 @@ Vmax = T(1.2)
 dTargetThresholdSuccess = T(0.1)
 dt = T(0.5)
 # This excludes the initial ramp-up time used to let the flow develop
-max_steps = 300
-n_steps_startup = 10 + rand(1:5)
+max_steps = 400
+#n_steps_startup = 10 + rand(1:5)  # for quick and dirty testing
+n_steps_startup = 300 + rand(1:100)  # to get actual developed flow
 # Circle radius and origin.
 R = M*RbyM
 x0 = T.([M/2, M/2])
