@@ -128,10 +128,8 @@ class WLEnv(gymnasium.Env):
                         
                     # Write some random data to the socket to prevent it locking up.
                     # (Guess how I found out this was necessary?)
-                    # The connection could be None in asynchronous mode.
-                    if self.connection is not None:
-                        send(np.zeros(self.n_action_vars), self.connection, msg_len=self.msg_len)
-                        if self.verbose: print("Random data written.")
+                    send(np.zeros(self.n_action_vars), self.connection, msg_len=self.msg_len)
+                    if self.verbose: print("Random data written.")
             
                     # Wait a bit to give Julia time to wrap things up in an orderly fashion.
                     time.sleep(self.kill_time_delay)

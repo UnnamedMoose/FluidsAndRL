@@ -35,7 +35,7 @@ sock = connect("127.0.0.1", socket_id)
 msg = "Connected to socket\n"; write(logfile, msg); flush(logfile)
 
 # Imitate a CFD time loop with an unknown number of time steps.
-obs = [1.0, 2.0, 3.0, 4.0]
+obs = [1.0, 2.0, 3.0]
 msg_len = 128
 
 nSteps = rand(5:10)
